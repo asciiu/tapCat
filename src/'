@@ -1,0 +1,304 @@
+import ui.View as View;
+import ui.ImageView as ImageView;
+import ui.TextView as TextView;
+import ui.resource.Image as Image;
+import ui.SpriteView as SpriteView;
+import ui.widget.SliderView as SliderView;
+
+//Import classes and Configuration
+import device
+import animate
+import math.geom.intersect as intersect;
+import math.geom.Rect as Rect;
+import AudioManager;
+
+//import constants.menuConstants as menuConstants;
+import menus.views.MenuView as MenuView;
+
+
+import src.Config as Config;
+import src.Cat as Cat;
+import src.Note as WholeNote;
+import src.HUD as HUD;
+import src.Rat as Rat;
+import src.Billy as Billy;
+import src.Trap as Trap;
+import src.Mine as Mine;
+
+//## Class: Game 
+exports = Class(View, function (supr) {
+
+	this.init = function (opts) {
+		supr(this, 'init', [opts]);	
+
+		this._enemies = [];
+
+		//var width = Config.boundsWidth;
+		//var height = Config.boundsHeight;
+		var width = this.style.width;
+		var height = this.style.height;
+
+		this._bgView = new ImageView({ 
+ 			image: 'resources/images/background.png', 
+			superview: this,
+			width: width,
+			height: height 
+		});
+
+		this._hud = new HUD({
+			superview: this,
+			kittyCB: this.changeKitty.bind(this),
+			width: width,
+			height: 60,
+			y: height-60,
+			zIndex: 10 
+		});
+		this._hud.on('Pause', this.handlePause.bind(this));
+		this._hud.on('Quit', this.handleQuit.bind(this));
+		this._hud.on('Resume', this.handleResume.bind(this));
+		
+		this._cat = new Cat({
+		 	superview: this,
+			width: width,
+			height: height,
+			zIndex: 5
+		});
+		this._cat.on('CatTap', this.handleCatTap.bind(this));
+
+		//this._ratAudioManager = new AudioManager({
+                //      path: 'resources/audio',
+		//	files: {
+		//		ratSqueak2: {
+		//			background: true,
+		//			volume: 0.05
+		//		},
+		//		ratSqueak3: {
+		//			background: false,
+		//			volume: 0.05
+		//		}
+		//	}
+		//});
+
+		this._traps = [];
+		for(var t = 0; t < 10; ++t) {
+			var trap = new Mine({
+				damagePts: 20,
+				hitsAllowed: 7,
+				superview: this,
+				width: 50,
+				height: 45
+			});
+			trap.on('MineExplosion', this.handleMineExplosion.bind(this));
+		 	this._traps.push(trap);
+		}
+
+		this.createEnemies();
+		this._deployedTrapNumber = 0;
+		this.on('InputStart', this.handleInputStart.bind(this));
+		this._lastCatAudioTime = new Date().getTime();
+		this._cat.meow();
+
+		this._animator = animate(this);
+		this._enemyType = 0;
+		this.startEnemyWave();
+	};
+
+	this.createEnemies = function() {
+		var rats = [];
+		for(var i = 0; i < 15; ++i) {
+			
+			var rat = new Rat({ 
+				id: i,
+				type: 0,
+				x: Math.floor((this.style.width-48) * Math.random()),
+				y: -Math.floor(500),
+				health: 1,
+				height: 48,
+				width: 48,
+				superview: this
+			});
+
+			rat.on('EnemySuccess', this.handleEnemySuccess.bind(this));
+			this._enemies.push(rat);
+		}
+		//this._enemies.push(rats);
+
+		var billies = [];
+		for(var i = 0; i < 5; ++i) {
+			var billy = new Billy({ 
+				type: 1,
+				x: Math.floor((this.style.width-32) * Math.random()),
+				y: -Math.floor(500),
+				health: 40,
+				height: 150,
+				width: 130,
+				superview: this
+			});
+
+			billy.on('EnemySuccess', this.handleEnemySuccess.bind(this));
+			this._enemies.push(billy);
+		}
+	};
+
+	this.startEnemyWave = function() {
+
+		if(!this._enemyType || this._enemyType == 2) 
+			this._enemyType = 0;
+
+		var self = this;
+		
+		this._enemies.forEach( function(enemy) {
+			if(enemy.getType() == self._enemyType) {
+				enemy.reset();
+				enemy.walk();
+			}
+		});
+		++this._enemyType;
+
+		this._animator.wait(5000).then (function() {
+			self.startEnemyWave();
+		});
+	};
+
+	this.checkTrapCollision = function() {
+		if(this._deployedTrapNumber == 0) return;
+		
+		var self = this;
+
+		for(var t = 0; t < this._traps.length; ++t) {
+			var trap = this._traps[t];
+			
+			if(!trap.isSet()) continue;
+
+			var trapRect = trap.getBoundingShape();
+			var blastRect = trap.getBlastRect();
+
+			for(var e = 0; e < this._enemies.length; ++e) {
+				var enemy = this._enemies[e];
+				var eRect = enemy.boundingRect();
+
+				if(enemy.isDead() || enemy.isSuccessful() || !enemy.isMoving()) 
+					continue;
+
+				if(!enemy.isDead() && !trap.isExploding() && intersect.rectAndRect(trapRect, eRect)) {
+					trap.hit();	
+
+					if(trap.hitsLeft() == 0) 
+						--this._deployedTrapNumber;
+
+				} else if(!enemy.isDead && trap.isExploding() && interset.rectAndRect(blastRect, eRect)) {
+					this._hud.addHP(1);
+						
+					enemy.hit(trap.getDamagePts());
+				}
+			}		
+		}
+	};
+
+	this.tick = function() {
+		if(this._pause) return;
+
+		var now = new Date().getTime();
+		if(now - this._lastCatAudioTime > 9000) {
+			this._lastCatAudioTime = now;
+			this._cat.meow();
+		}
+
+		this.checkTrapCollision();
+	};
+
+	this.changeKitty = function(kitty) {
+		console.log(kitty);
+		this._cat.setCombatMode(kitty);
+	};
+
+	this.handleCatTap = function () {
+
+		this._lastCatAudioTime = new Date().getTime();
+		var catRect = this._cat.getRect();
+		var catLane = new Rect(catRect.x, 0, catRect.width, this.style.height);
+		
+		for(var e = 0; e < this._enemies.length; ++e) {
+			var enemy = this._enemies[e];
+
+			if(!enemy.isMoving() || enemy.isDead() || enemy.isSuccessful()) 
+				continue;
+
+			if(intersect.rectAndRect(catRect, enemy.getBoundingShape())) {
+
+				enemy.hit(20);	
+
+				this._hud.addHP(1);
+				this._cat.action();
+			}
+		}
+	};
+
+	this.handleEnemySuccess = function(enemy) {
+	
+		//this.removeEnemy(enemy);
+	};
+
+	this.handleInputStart = function(event, point) {
+		if(this._pause) return;
+
+		// if input is received above kitty
+		if( point.y < this._cat.getCatRegion()) {
+			// deploy a trap if the hit counter is greater than 9 and the deployed trap number
+			// is less than the number of traps
+			if(this._hud.getHP() > 9 && this._deployedTrapNumber < this._traps.length) {
+				for(var i = 0; i < this._traps.length; ++i) {
+					var trap = this._traps[i];	
+
+					if(!trap.isSet()) {
+						trap.set(point.x, point.y);
+						break;
+					}
+				}
+
+				++this._deployedTrapNumber;
+				this._hud.addHP(-10);
+			}
+		}
+	};
+	
+	this.handleMineExplosion = function(mine) {
+		var self = this;
+
+		this._enemies.forEach( function(enemy) {
+			if(!enemy.isDead() && !enemy.isSuccessful() && enemy.isMoving())  {
+				if(intersect.rectAndRect(mine.getBlastRect(), enemy.boundingRect())) {
+					self._hud.addHP(1);
+						
+					enemy.hit(mine.getDamagePts());
+				}
+			}
+		});
+	};
+
+	this.handlePause = function() {
+		this._animator.pause();
+		this._pause = true;
+		this._enemies.forEach( function(enemy) {
+			enemy.pause();
+		});
+	};
+
+	this.handleResume = function() {
+		this._animator.resume();
+		this._pause = false;
+		this._enemies.forEach( function(enemy) {
+			enemy.resume();
+		});
+	};
+
+	this.handleQuit = function() {
+		// implement quit and remove resume call
+		this.resumeGame();
+	};
+	
+	this.removeEnemy = function(enemy) {
+		//var index = this._rushingEnemies.indexOf(enemy);
+		//this._rushingEnemies.splice(index, 1);
+	};
+});
